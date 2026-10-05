@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Värvidega küsimustik</title>
+<style>
+body {font-family:Arial,sans-serif; text-align:center; background:#f5f5f5; padding:20px; color:#222}
+main {max-width:680px; margin:auto}
+#kaamera {position:relative; width: min(100%, 480px); margin:20px auto; line-height:0}
+video {display:block; width:100%; height:auto; border-radius:8px}
+/* Sama 15% suurune ala loetakse ka JavaScriptis. */
+#ala {position:absolute; width:15%; height:15%; box-sizing:border-box; border:3px solid white; box-shadow:0 0 3px black; top:50%; left:50%; transform:translate(-50%,-50%); pointer-events:none}
+button {font-size:18px; padding:10px 24px; cursor:pointer}
+#olek {min-height:40px}
+table {width:100%; border-collapse:collapse; text-align:left; background:white}
+th,td {padding:12px; border-bottom:1px solid #ddd}
+[hidden] {display:none!important}
+</style>
+</head>
+<body>
+<main>
+<h1>Värvidega küsimustik</h1>
+<p>Roheline = <b>JAH</b> · Punane = <b>EI</b></p>
+<p>Näita värvi valges ruudus umbes üks sekund. Pärast vastamist eemalda värv ruudust.</p>
+<p id="edenemine"></p>
+<h2 id="kusimus">Vajuta alustamiseks nuppu</h2>
+<div id="kaamera" hidden>
+<video id="video" autoplay playsinline muted></video>
+<div id="ala"></div>
+</div>
+<button id="nupp" type="button">Alusta</button>
+<p id="olek" role="status" aria-live="polite"></p>
+<div id="tulemused"></div>
+<canvas id="canvas" hidden></canvas>
+</main>
+<script>
+const kusimused = [
+  "Kas sulle meeldib programmeerimine?",
+  "Kas sulle meeldib sport?",
+  "Kas sul on lemmikloom?",
+  "Kas sulle meeldib reisida?",
+  "Kas sa jood kohvi?"
+];
+let vastused = [], nr = 0, oota = false, valmis = true;
+let eelmineVarv = "", varviAlgus = null, eemaldamiseAlgus = null;
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", {willReadFrequently:true});
+const nupp = document.getElementById("nupp");
+const olek = document.getElementById("olek");
+const kaamera = document.getElementById("kaamera");
+nupp.addEventListener("click", alusta);
+
+async function alusta() {
+  nupp.disabled = true;
+  olek.textContent = "Kaamera avamine…";
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Ava leht localhost-aadressil või HTTPS kaudu.");
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    video.srcObject = stream;
+    kaamera.hidden = false;
+    await video.play();
+    vastused = []; nr = 0; oota = false; valmis = false;
+    eelmineVarv = ""; varviAlgus = null; eemaldamiseAlgus = null;
+    document.getElementById("tulemused").replaceChildren();
+    nupp.hidden = true;
+    naitaKusimus();
+    requestAnimationFrame(kontrolliVarvi);
+  } catch (viga) {
+    peataKaamera();
+    kaamera.hidden = true;
+    olek.textContent = viga.name === "NotAllowedError"
+      ? "Luba brauseris kaamera kasutamine ja proovi uuesti."
+      : "Kaamerat ei õnnestunud avada. Kontrolli, et kaamera on ühendatud ja leht on avatud localhost-aadressil. " + viga.message;
+  } finally { nupp.disabled = false; }
+}
+function naitaKusimus() {
+  document.getElementById("kusimus").textContent = kusimused[nr];
+  document.getElementById("edenemine").textContent = "Küsimus " + (nr + 1) + " / " + kusimused.length;
+  olek.textContent = "Näita ruudus rohelist või punast värvi.";
+}
+function tuvastaVarv(r, g, b) {
+  if (g > r * 1.4 && g > b * 1.3 && g > 55) return "Jah";
+  if (r > g * 1.4 && r > b * 1.4 && r > 65) return "Ei";
+  return "";
+}
+function loeVarv() {
+  // Kasutame video tegelikku suurust, et valge ruut ja loetav ala kattuksid.
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  }
+  ctx.drawImage(video, 0, 0);
+  const w = Math.max(1, Math.floor(canvas.width * 0.15));
+  const h = Math.max(1, Math.floor(canvas.height * 0.15));
+  const pikslid = ctx.getImageData(Math.floor((canvas.width-w)/2), Math.floor((canvas.height-h)/2), w, h).data;
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < pikslid.length; i += 4) {
+    r += pikslid[i]; g += pikslid[i+1]; b += pikslid[i+2];
+  }
+  const arv = pikslid.length / 4;
+  return tuvastaVarv(r/arv, g/arv, b/arv);
+}
+function kontrolliVarvi(aeg) {
+  if (valmis) return;
+  if (video.readyState >= 2 && video.videoWidth > 0) {
+    const varv = loeVarv();
+    if (oota) {
+      // Värv peab olema eemaldatud vähemalt pool sekundit.
+      if (varv === "") {
+        if (eemaldamiseAlgus === null) eemaldamiseAlgus = aeg;
+        if (aeg - eemaldamiseAlgus >= 500) {
+          oota = false; eelmineVarv = ""; varviAlgus = null;
+          olek.textContent = "Näita järgmist värvi.";
+        }
+      } else eemaldamiseAlgus = null;
+    } else if (varv === "") {
+      eelmineVarv = ""; varviAlgus = null;
+      olek.textContent = "Näita ruudus rohelist või punast värvi.";
+    } else {
+      if (varv !== eelmineVarv || varviAlgus === null) {
+        eelmineVarv = varv; varviAlgus = aeg;
+      }
+      olek.textContent = "Tuvastatud: " + varv + ". Hoia värvi paigal…";
+      if (aeg - varviAlgus >= 1000) {
+        vastused.push(varv); nr++;
+        oota = true; eemaldamiseAlgus = null; varviAlgus = null;
+        if (nr < kusimused.length) {
+          naitaKusimus();
+          olek.textContent = "Vastus salvestatud: " + varv + ". Eemalda värv ruudust.";
+        } else naitaTulemused();
+      }
+    }
+  }
+  if (!valmis) requestAnimationFrame(kontrolliVarvi);
+}
+function peataKaamera() {
+  if (video.srcObject) video.srcObject.getTracks().forEach(track => track.stop());
+  video.srcObject = null;
+}
+function naitaTulemused() {
+  valmis = true;
+  document.getElementById("kusimus").textContent = "Küsimustik on lõppenud!";
+  document.getElementById("edenemine").textContent = "";
+  olek.textContent = "";
+  const tulemused = document.getElementById("tulemused");
+  const pealkiri = document.createElement("h2");
+  pealkiri.textContent = "Sinu vastused";
+  const tabel = document.createElement("table");
+  const pais = tabel.createTHead().insertRow();
+  for (const tekst of ["Küsimus", "Vastus"]) {
+    const th = document.createElement("th"); th.textContent = tekst; pais.appendChild(th);
+  }
+  const keha = tabel.createTBody();
+  kusimused.forEach((kusimus, i) => {
+    const rida = keha.insertRow();
+    rida.insertCell().textContent = kusimus;
+    rida.insertCell().textContent = vastused[i];
+  });
+  tulemused.replaceChildren(pealkiri, tabel);
+  peataKaamera(); kaamera.hidden = true;
+  nupp.textContent = "Alusta uuesti"; nupp.hidden = false;
+}
+window.addEventListener("pagehide", peataKaamera);
+</script>
+</body>
+</html>
